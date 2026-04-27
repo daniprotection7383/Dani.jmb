@@ -6,6 +6,7 @@
     <title>AR0 - Private Chat Online</title>
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         :root { --bg: #0a0b10; --panel: #161b22; --accent: #8a2be2; --others-bg: #21262d; --text: #e6edf3; --neon: #00f2ff; }
         
@@ -106,11 +107,18 @@
         }
         #msg-input { flex: 1; margin: 0; }
 
-        /* Style Tambahan buat VN */
         .vn-btn { width: 60px; background: #222; border: 1px solid var(--accent); font-size: 11px; }
         .vn-btn.recording { background: #ff4444; animation: blink 1s infinite; }
         @keyframes blink { 50% { opacity: 0.5; } }
         audio { max-width: 100%; margin-top: 5px; height: 30px; border-radius: 5px; }
+
+        /* Style Baru Tombol Call */
+        .call-btn { 
+            background: none; border: 1px solid var(--neon); color: var(--neon); 
+            width: 35px; height: 35px; border-radius: 50%; padding: 0; 
+            display: flex; justify-content: center; align-items: center; font-size: 18px;
+        }
+        .hangup-btn { background: #ff4444 !important; width: auto !important; padding: 5px 10px !important; display: none; }
     </style>
 </head>
 <body>
@@ -131,11 +139,14 @@
             <label for="pp-input"><img id="my-pp" class="profile-btn" src="https://via.placeholder.com/40" title="Klik ganti foto"></label>
             <input type="file" id="pp-input" hidden accept="image/*" onchange="updatePP(this)">
             <span id="display-name" style="color: var(--neon); font-weight: bold;"></span>
+            <button id="start-call" class="call-btn">📞</button>
+            <button id="end-call" class="hangup-btn">END</button>
         </div>
         <button onclick="location.reload()" style="width: auto; padding: 5px 15px; background: #333; font-size: 12px;">OUT</button>
     </header>
     
     <div id="chat-box"></div>
+    <audio id="remote-audio" autoplay></audio>
     
     <footer>
         <input type="text" id="msg-input" placeholder="Ketik pesan..." onkeypress="if(event.key==='Enter') sendMsg()">
@@ -159,6 +170,9 @@
     firebase.initializeApp(firebaseConfig);
     const db = firebase.database();
     let currentUser = null;
+    let peer;
+    let localStream;
+    let activeCall;
 
     // Logika VN
     let mediaRecorder;
@@ -196,7 +210,7 @@
             isRecording = false;
             btn.innerText = "VOICE";
             btn.classList.remove('recording');
-            mediaRecorder.stream.getTracks().forEach(track => track.stop());
+            if(mediaRecorder.stream) mediaRecorder.stream.getTracks().forEach(track => track.stop());
         }
     }
 
@@ -204,7 +218,7 @@
         const pp = document.getElementById('my-pp').src;
         db.ref("global_chat").push({
             sender: currentUser.nama,
-            vn: audioData, // Disimpan sebagai Base64
+            vn: audioData,
             avatar: pp,
             time: Date.now()
         });
@@ -234,11 +248,64 @@
             const savedPP = localStorage.getItem('pp_' + user);
             if(savedPP) document.getElementById('my-pp').src = savedPP;
             
+            initPeer(user); // Aktifin fitur Call pake ID username
             loadChats();
         } else {
             document.getElementById('err').innerText = "ID atau Password Salah!";
         }
     }
+
+    // --- LOGIKA FITUR CALL (PEERJS) ---
+    function initPeer(userId) {
+        peer = new Peer(userId); // ID Call adalah username login
+
+        peer.on('call', (call) => {
+            if (confirm("Ada panggilan masuk dari user lain. Angkat?")) {
+                navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+                    localStream = stream;
+                    call.answer(stream);
+                    handleCall(call);
+                });
+            }
+        });
+    }
+
+    function handleCall(call) {
+        activeCall = call;
+        document.getElementById('end-call').style.display = "inline-block";
+        document.getElementById('start-call').style.display = "none";
+
+        call.on('stream', (remoteStream) => {
+            document.getElementById('remote-audio').srcObject = remoteStream;
+        });
+
+        call.on('close', () => {
+            endCallUI();
+        });
+    }
+
+    document.getElementById('start-call').onclick = () => {
+        const targetId = prompt("Masukkan Username tujuan (contoh: dani / rahel):").toLowerCase();
+        if(!targetId || targetId === currentUser.id) return;
+
+        navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+            localStream = stream;
+            const call = peer.call(targetId, stream);
+            handleCall(call);
+        }).catch(err => alert("Mic Error: " + err));
+    };
+
+    document.getElementById('end-call').onclick = () => {
+        if(activeCall) activeCall.close();
+        endCallUI();
+    };
+
+    function endCallUI() {
+        if(localStream) localStream.getTracks().forEach(t => t.stop());
+        document.getElementById('end-call').style.display = "none";
+        document.getElementById('start-call').style.display = "flex";
+    }
+    // ---------------------------------
 
     function updatePP(input) {
         if (input.files && input.files[0]) {
@@ -291,7 +358,6 @@
                     const div = document.createElement('div');
                     div.className = `msg-wrapper ${sideClass}`;
                     
-                    // Logic buat nampilin Text atau VN
                     let isiPesan = m.text ? `<div>${m.text}</div>` : `<audio controls src="${m.vn}"></audio>`;
                     
                     div.innerHTML = `
@@ -313,11 +379,11 @@
             alert("Mana bisa! Ini kan bukan chat lo.");
             return;
         }
-
         if(confirm("Hapus pesan ini?")) {
             db.ref("global_chat/" + id).remove();
         }
     }
 </script>
 </body>
-</html>
+    </html>
+    
