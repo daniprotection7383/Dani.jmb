@@ -21,6 +21,26 @@
             overflow: hidden; 
         }
 
+        /* --- STYLE BARU UNTUK VC & NOTIF --- */
+        #video-grid { 
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+            background: rgba(0,0,0,0.9); z-index: 200; display: none; 
+            flex-direction: column; align-items: center; justify-content: center;
+        }
+        .video-box { width: 90%; max-width: 400px; border-radius: 15px; border: 2px solid var(--neon); background: #000; overflow: hidden; position: relative; }
+        video { width: 100%; height: auto; display: block; }
+        .local-video { width: 100px; position: absolute; bottom: 10px; right: 10px; border: 1px solid white; z-index: 201; border-radius: 10px; }
+        
+        #incoming-call { 
+            position: fixed; top: 20px; left: 50%; transform: translateX(-50%); 
+            width: 280px; background: var(--panel); border: 2px solid var(--neon); 
+            border-radius: 15px; padding: 15px; z-index: 300; display: none; 
+            box-shadow: 0 0 20px var(--neon); text-align: center;
+            animation: slideDown 0.5s ease;
+        }
+        @keyframes slideDown { from { top: -100px; } to { top: 20px; } }
+        /* ---------------------------------- */
+
         .login-screen { 
             position: fixed; 
             inset: 0; 
@@ -112,16 +132,32 @@
         @keyframes blink { 50% { opacity: 0.5; } }
         audio { max-width: 100%; margin-top: 5px; height: 30px; border-radius: 5px; }
 
-        /* Style Baru Tombol Call */
         .call-btn { 
             background: none; border: 1px solid var(--neon); color: var(--neon); 
             width: 35px; height: 35px; border-radius: 50%; padding: 0; 
-            display: flex; justify-content: center; align-items: center; font-size: 18px;
+            display: flex; justify-content: center; align-items: center; font-size: 18px; margin: 0 2px;
         }
         .hangup-btn { background: #ff4444 !important; width: auto !important; padding: 5px 10px !important; display: none; }
     </style>
 </head>
 <body>
+
+<div id="incoming-call">
+    <p id="caller-name" style="margin: 0; font-weight: bold; color: var(--neon);"></p>
+    <p style="font-size: 12px; margin: 5px 0;">Memanggil Anda...</p>
+    <div style="display: flex; gap: 10px; justify-content: center;">
+        <button id="accept-call" style="background: #28a745; padding: 8px;">ANGKAT</button>
+        <button id="reject-call" style="background: #dc3545; padding: 8px;">TOLAK</button>
+    </div>
+</div>
+
+<div id="video-grid">
+    <div class="video-box">
+        <video id="remote-video" autoplay playsinline></video>
+        <video id="local-video" class="local-video" autoplay playsinline muted></video>
+    </div>
+    <button onclick="endCallUI()" style="margin-top: 20px; width: 150px; background: #ff4444;">TUTUP</button>
+</div>
 
 <div id="login-screen" class="login-screen">
     <div class="login-box">
@@ -135,14 +171,15 @@
 
 <div id="chat-app">
     <header>
-        <div style="display: flex; align-items: center; gap: 10px;">
+        <div style="display: flex; align-items: center; gap: 5px;">
             <label for="pp-input"><img id="my-pp" class="profile-btn" src="https://via.placeholder.com/40" title="Klik ganti foto"></label>
             <input type="file" id="pp-input" hidden accept="image/*" onchange="updatePP(this)">
-            <span id="display-name" style="color: var(--neon); font-weight: bold;"></span>
-            <button id="start-call" class="call-btn">📞</button>
+            <span id="display-name" style="color: var(--neon); font-weight: bold; font-size: 14px;"></span>
+            <button id="start-call" class="call-btn" title="Telepon">📞</button>
+            <button id="start-vc" class="call-btn" title="Video Call & Share Screen" style="font-size: 22px;">🖥️</button>
             <button id="end-call" class="hangup-btn">END</button>
         </div>
-        <button onclick="location.reload()" style="width: auto; padding: 5px 15px; background: #333; font-size: 12px;">OUT</button>
+        <button onclick="location.reload()" style="width: auto; padding: 5px 10px; background: #333; font-size: 12px;">OUT</button>
     </header>
     
     <div id="chat-box"></div>
@@ -173,8 +210,22 @@
     let peer;
     let localStream;
     let activeCall;
+    
+    // Sound Tring Tring (Synthesized)
+    function playRingtone() {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(880, ctx.currentTime);
+        gain.gain.setValueAtTime(0.1, ctx.currentTime);
+        osc.start();
+        setTimeout(() => osc.stop(), 1000);
+    }
 
-    // Logika VN
+    // VN Logika (Tetap Normal)
     let mediaRecorder;
     let audioChunks = [];
     let isRecording = false;
@@ -186,145 +237,153 @@
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 mediaRecorder = new MediaRecorder(stream);
                 audioChunks = [];
-
                 mediaRecorder.ondataavailable = (event) => audioChunks.push(event.data);
                 mediaRecorder.onstop = async () => {
                     const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
                     const reader = new FileReader();
                     reader.readAsDataURL(audioBlob);
-                    reader.onloadend = () => {
-                        const base64Audio = reader.result;
-                        sendVN(base64Audio);
-                    };
+                    reader.onloadend = () => sendVN(reader.result);
                 };
-
                 mediaRecorder.start();
                 isRecording = true;
                 btn.innerText = "STOP";
                 btn.classList.add('recording');
-            } catch (err) {
-                alert("Gagal akses mic: " + err);
-            }
+            } catch (err) { alert("Mic error: " + err); }
         } else {
             mediaRecorder.stop();
             isRecording = false;
             btn.innerText = "VOICE";
             btn.classList.remove('recording');
-            if(mediaRecorder.stream) mediaRecorder.stream.getTracks().forEach(track => track.stop());
+            if(mediaRecorder.stream) mediaRecorder.stream.getTracks().forEach(t => t.stop());
         }
     }
 
     function sendVN(audioData) {
-        const pp = document.getElementById('my-pp').src;
         db.ref("global_chat").push({
             sender: currentUser.nama,
             vn: audioData,
-            avatar: pp,
+            avatar: document.getElementById('my-pp').src,
             time: Date.now()
         });
     }
 
     const daftarUser = {
-        "Rafa": { pass: "RAFA12", nama: "RAFA" },
-        "Dani": { pass: "dani123", nama: "DANI OWNER☑️" },
-        "Repan": { pass: "repan72", nama: "REPAN" },
-        "Rafka": { pass: "rafka79", nama: "RAFKA" },
-        "Diki": { pass: "dIKI63", nama: "DIKI" },
-        "Puji": { pass: "pujie27", nama: "PUJI" },
-        "Alfi": { pass: "alfi21", nama: "ALFI" }
+        "rafa": { pass: "rafa12", nama: "RAFA" },
+        "dani": { pass: "dani123", nama: "DANI OWNER☑️" },
+        "repan": { pass: "repan12", nama: "REPAN" },
+        "rafka": { pass: "rafka12", nama: "RAFKA" },
+        "diki": { pass: "diki12", nama: "DIKI" },
+        "puji": { pass: "puji12", nama: "PUJI" },
+        "alfi": { pass: "alfi12", nama: "ALFI" }
     };
 
     function login() {
         const user = document.getElementById('u-name').value.toLowerCase().trim();
         const pass = document.getElementById('u-pass').value;
-        
         if(daftarUser[user] && daftarUser[user].pass === pass) {
             currentUser = daftarUser[user];
-            currentUser.id = user;
+            currentUser.id = user.toUpperCase();
             document.getElementById('login-screen').style.display = 'none';
             document.getElementById('chat-app').style.display = 'flex';
             document.getElementById('display-name').innerText = currentUser.nama;
-            
             const savedPP = localStorage.getItem('pp_' + user);
             if(savedPP) document.getElementById('my-pp').src = savedPP;
-            
-            initPeer(user); // Aktifin fitur Call pake ID username
+            initPeer(user);
             loadChats();
-        } else {
-            document.getElementById('err').innerText = "ID atau Password Salah!";
-        }
+        } else { document.getElementById('err').innerText = "Salah!"; }
     }
 
-    // --- LOGIKA FITUR CALL (PEERJS) ---
     function initPeer(userId) {
-        peer = new Peer(userId); // ID Call adalah username login
-
+        peer = new Peer(userId);
         peer.on('call', (call) => {
-            if (confirm("Ada panggilan masuk dari user lain. Angkat?")) {
-                navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+            document.getElementById('incoming-call').style.display = 'block';
+            document.getElementById('caller-name').innerText = call.peer.toUpperCase();
+            let ring = setInterval(playRingtone, 1500);
+
+            document.getElementById('accept-call').onclick = () => {
+                clearInterval(ring);
+                document.getElementById('incoming-call').style.display = 'none';
+                navigator.mediaDevices.getUserMedia({ audio: true, video: true }).then((stream) => {
                     localStream = stream;
                     call.answer(stream);
-                    handleCall(call);
+                    handleCall(call, true);
                 });
-            }
+            };
+
+            document.getElementById('reject-call').onclick = () => {
+                clearInterval(ring);
+                document.getElementById('incoming-call').style.display = 'none';
+                call.close();
+            };
         });
     }
 
-    function handleCall(call) {
+    function handleCall(call, isVideo = false) {
         activeCall = call;
+        if(isVideo) document.getElementById('video-grid').style.display = 'flex';
         document.getElementById('end-call').style.display = "inline-block";
         document.getElementById('start-call').style.display = "none";
+        document.getElementById('start-vc').style.display = "none";
 
         call.on('stream', (remoteStream) => {
-            document.getElementById('remote-audio').srcObject = remoteStream;
+            if(isVideo) {
+                document.getElementById('remote-video').srcObject = remoteStream;
+                document.getElementById('local-video').srcObject = localStream;
+            } else {
+                document.getElementById('remote-audio').srcObject = remoteStream;
+            }
         });
-
-        call.on('close', () => {
-            endCallUI();
-        });
+        call.on('close', () => endCallUI());
     }
 
+    // TOMBOL TELEPON BIASA
     document.getElementById('start-call').onclick = () => {
-        const targetId = prompt("Masukkan Username tujuan (contoh: dani / rahel):").toLowerCase();
-        if(!targetId || targetId === currentUser.id) return;
-
+        const target = prompt("Username tujuan:").toLowerCase();
+        if(!target) return;
         navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
             localStream = stream;
-            const call = peer.call(targetId, stream);
-            handleCall(call);
-        }).catch(err => alert("Mic Error: " + err));
+            const call = peer.call(target, stream);
+            handleCall(call, false);
+        });
     };
 
-    document.getElementById('end-call').onclick = () => {
-        if(activeCall) activeCall.close();
-        endCallUI();
+    // TOMBOL VIDEO CALL / SHARE SCREEN
+    document.getElementById('start-vc').onclick = async () => {
+        const target = prompt("Username tujuan (VC/Share Screen):").toLowerCase();
+        if(!target) return;
+        
+        try {
+            // Coba Screen Share, kalo gagal balik ke Kamera
+            let stream;
+            if(confirm("Gunakan Share Screen? (OK = Share Screen, Cancel = Kamera)")) {
+                stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+            } else {
+                stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            }
+            localStream = stream;
+            const call = peer.call(target, stream);
+            handleCall(call, true);
+        } catch(e) { alert("Gagal akses media"); }
     };
+
+    document.getElementById('end-call').onclick = () => endCallUI();
 
     function endCallUI() {
+        if(activeCall) activeCall.close();
         if(localStream) localStream.getTracks().forEach(t => t.stop());
+        document.getElementById('video-grid').style.display = 'none';
         document.getElementById('end-call').style.display = "none";
         document.getElementById('start-call').style.display = "flex";
+        document.getElementById('start-vc').style.display = "flex";
     }
-    // ---------------------------------
 
+    // SISA LOGIKA TETAP SAMA (NORMAL)
     function updatePP(input) {
         if (input.files && input.files[0]) {
             const reader = new FileReader();
-            reader.onload = function(e) {
-                const imgData = e.target.result;
-                document.getElementById('my-pp').src = imgData;
-                localStorage.setItem('pp_' + currentUser.id, imgData);
-
-                db.ref("global_chat").once("value", (snap) => {
-                    const data = snap.val();
-                    if(data) {
-                        for(let id in data) {
-                            if(data[id].sender === currentUser.nama) {
-                                db.ref("global_chat/" + id).update({ avatar: imgData });
-                            }
-                        }
-                    }
-                });
+            reader.onload = (e) => {
+                document.getElementById('my-pp').src = e.target.result;
+                localStorage.setItem('pp_' + currentUser.id.toLowerCase(), e.target.result);
             };
             reader.readAsDataURL(input.files[0]);
         }
@@ -333,12 +392,10 @@
     function sendMsg() {
         const txt = document.getElementById('msg-input').value.trim();
         if(!txt) return;
-        const pp = document.getElementById('my-pp').src;
-        
         db.ref("global_chat").push({
             sender: currentUser.nama,
             text: txt,
-            avatar: pp,
+            avatar: document.getElementById('my-pp').src,
             time: Date.now()
         });
         document.getElementById('msg-input').value = "";
@@ -353,17 +410,12 @@
                 for(let id in data) {
                     const m = data[id];
                     const isMe = (m.sender === currentUser.nama);
-                    const sideClass = isMe ? 'me' : 'others';
-
                     const div = document.createElement('div');
-                    div.className = `msg-wrapper ${sideClass}`;
-                    
-                    let isiPesan = m.text ? `<div>${m.text}</div>` : `<audio controls src="${m.vn}"></audio>`;
-                    
+                    div.className = `msg-wrapper ${isMe ? 'me' : 'others'}`;
                     div.innerHTML = `
                         <div class="msg-content" onclick="deleteMsg('${id}', '${m.sender}')">
                             <div class="msg-name">${m.sender}</div>
-                            ${isiPesan}
+                            ${m.text ? `<div>${m.text}</div>` : `<audio controls src="${m.vn}"></audio>`}
                         </div>
                         <img src="${m.avatar}" class="msg-pp">
                     `;
@@ -374,14 +426,8 @@
         });
     }
 
-    function deleteMsg(id, senderName) {
-        if(senderName !== currentUser.nama) {
-            alert("TIDAK BISA MENGHAPUS PESAN ORANG KAIN !.");
-            return;
-        }
-        if(confirm("Hapus pesan ini?")) {
-            db.ref("global_chat/" + id).remove();
-        }
+    function deleteMsg(id, name) {
+        if(name === currentUser.nama && confirm("Hapus?")) db.ref("global_chat/" + id).remove();
     }
 </script>
 </body>
